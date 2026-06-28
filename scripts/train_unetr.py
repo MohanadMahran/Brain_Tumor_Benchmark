@@ -149,7 +149,7 @@ def main():
     )
     val_loader = DataLoader(
         val_dataset,
-        batch_size=1,
+        batch_size=config.get("val_batch_size", 1),
         shuffle=False,
         num_workers=config.get("num_workers", 4),
         pin_memory=config.get("pin_memory", True),

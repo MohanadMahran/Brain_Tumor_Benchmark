@@ -19,6 +19,7 @@ sliding_window_overlap: 0.25
 # Training
 effective_batch_size: 2
 physical_batch_size: 1
+val_batch_size: 1
 gradient_accumulation_steps: 2
 num_epochs: 300
 log_every_n_epochs: 10
