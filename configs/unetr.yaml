@@ -1,0 +1,29 @@
+# UNETR specific configuration
+model: unetr
+embedding_dim: 256
+num_layers: 6
+num_heads: 4
+mlp_ratio: 4
+patch_size_tokens: 16   # Each token is 16x16x16
+in_channels: 4
+out_channels: 3
+dropout: 0.1
+
+# Feature extraction layers
+feature_extraction_layers: [3, 6]
+
+# Optimizer — lower LR and longer warmup for transformer stability
+optimizer: adamw
+learning_rate: 1.0e-4
+weight_decay: 1.0e-5
+warmup_epochs: 15
+scheduler: cosine_annealing
+min_lr: 1.0e-6
+
+# Optional pretrained weights
+use_pretrained: false
+pretrained_source: "vit_base_patch16"
+
+# Target parameter count
+target_params_millions: 19.0
+param_tolerance: 0.05   # 5% tolerance

@@ -1,0 +1,38 @@
+# Data — never commit raw MRI data
+data/raw/
+
+# Outputs — models, logs, reports are generated not tracked
+outputs/models/
+outputs/logs/
+outputs/mlruns/
+outputs/reports/
+
+# Keep the outputs directory structure but not its contents
+!outputs/.gitkeep
+!outputs/models/.gitkeep
+!outputs/models/unet3d/.gitkeep
+!outputs/models/unetr/.gitkeep
+!outputs/logs/.gitkeep
+!outputs/logs/unet3d/.gitkeep
+!outputs/logs/unetr/.gitkeep
+!outputs/mlruns/.gitkeep
+!outputs/reports/.gitkeep
+!outputs/reports/tcga/.gitkeep
+!outputs/reports/ssa/.gitkeep
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# UV virtual environment
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
