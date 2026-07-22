@@ -3,6 +3,8 @@
 [![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.2%2B-ee4c2c.svg)](https://pytorch.org/)
 [![MONAI](https://img.shields.io/badge/MONAI-1.3%2B-2d335c.svg)](https://monai.io/)
+[![Hugging Face 3D U-Net](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-3D%20U--Net-yellow.svg)](https://huggingface.co/MohanadKombar/brain-tumor-unet3d-brats)
+[![Hugging Face UNETR](https://img.shields.io/badge/%F0%9F%A4%97%20Hugging%20Face-UNETR-yellow.svg)](https://huggingface.co/MohanadKombar/brain-tumor-unetr-brats)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A comprehensive, evidence-based benchmarking framework comparing 3D Convolutional Neural Networks (**3D U-Net**) and Vision Transformers (**UNETR**) for 3D multi-modal brain tumor segmentation.
@@ -13,6 +15,7 @@ Models were trained on a composite, MD5-deduplicated dataset derived from **BraT
 
 ## 📖 Table of Contents
 - [Overview](#-overview)
+- [Pre-trained Models](#-pre-trained-models)
 - [Key Features](#-key-features)
 - [Benchmark Results](#-benchmark-results)
 - [Sample Predictions](#-sample-predictions)
@@ -32,6 +35,30 @@ Models were trained on a composite, MD5-deduplicated dataset derived from **BraT
 ## 🌟 Overview
 
 This project provides a controlled empirical comparison between 3D CNN and 3D Vision Transformer architectures for medical image segmentation.
+
+---
+
+## 🤗 Pre-trained Models
+
+Both models are published on Hugging Face Hub with self-contained architecture modules, standalone inference scripts, and full model cards:
+
+| Architecture | Parameters | Val Dice | Hugging Face Repository | Direct Model Weights |
+| :--- | :---: | :---: | :---: | :---: |
+| **3D U-Net** | 19,992,603 (~19.99M) | **0.8694** | [`MohanadKombar/brain-tumor-unet3d-brats`](https://huggingface.co/MohanadKombar/brain-tumor-unet3d-brats) | [Download `pytorch_model.bin`](https://huggingface.co/MohanadKombar/brain-tumor-unet3d-brats/resolve/main/pytorch_model.bin) |
+| **UNETR** | 19,327,907 (~19.33M) | 0.8362 | [`MohanadKombar/brain-tumor-unetr-brats`](https://huggingface.co/MohanadKombar/brain-tumor-unetr-brats) | [Download `pytorch_model.bin`](https://huggingface.co/MohanadKombar/brain-tumor-unetr-brats/resolve/main/pytorch_model.bin) |
+
+### Quick Inference from Hugging Face Hub
+
+```python
+import torch
+from huggingface_hub import hf_hub_download
+
+# Download and load 3D U-Net or UNETR from Hugging Face
+from huggingface.unet3d.inference import load_model, predict
+
+model, metadata = load_model("MohanadKombar/brain-tumor-unet3d-brats")
+probabilities = predict(model, torch.randn(1, 4, 128, 128, 128))
+```
 
 ### Evaluated Architectures & Parameter Parity:
 1. **3D U-Net**: Purely convolutional encoder-decoder network. Configured with **19,992,603 parameters** (~19.99M), utilizing `GroupNorm` (groups=4) and base channel width of 60 progressing through `[60, 120, 240, 480]`.
