@@ -63,7 +63,7 @@ def generate_comparison_report(
                     if col in df.columns:
                         row[col] = df[col].mean()
 
-                # Per-tumor-type for TCGA
+                # Per-tumor-type for UPenn-GBM
                 if "tumor_type" in df.columns:
                     for tt in ["GBM", "LGG"]:
                         subset = df[df["tumor_type"] == tt]
@@ -96,7 +96,7 @@ def _print_comparison_table(df: pd.DataFrame):
     Args:
         df: Comparison DataFrame.
     """
-    table = Table(title="Benchmark Comparison: U-Net 3D vs UNETR")
+    table = Table(title="Brain Tumor Segmentation Benchmark Comparison")
     table.add_column("Model", style="cyan")
     table.add_column("Benchmark", style="magenta")
     table.add_column("Cases", justify="right")

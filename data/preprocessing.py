@@ -124,7 +124,7 @@ def convert_labels_to_regions(seg: np.ndarray) -> np.ndarray:
         0 = Background
         1 = NCR (Necrotic tumor core)
         2 = ED (Peritumoral edema)
-        4 = ET (Enhancing tumor)
+        4 = ET (Enhancing tumor) (Note: label 3 is mapped to 4 for compatibility)
 
     Evaluation regions:
         ET = label 4
@@ -137,6 +137,15 @@ def convert_labels_to_regions(seg: np.ndarray) -> np.ndarray:
     Returns:
         Binary region masks of shape (3, H, W, D) for [ET, TC, WT].
     """
+    # IMPORTANT: Remap label 3 → 4 for UPenn-GBM compatibility.
+    # UPenn-GBM uses label 3 for enhancing tumor (ET), whereas the BraTS
+    # competition standard uses label 4 for ET.  BraTS 2021, 2024, and SSA
+    # datasets already use label 4 for ET and *never* contain label 3 in
+    # their ground-truth segmentations (label values are {0, 1, 2, 4}), so
+    # this np.where is a safe no-op for those datasets.
+    # DO NOT REMOVE this line — it is required for correct UPenn-GBM evaluation.
+    seg = np.where(seg == 3, 4, seg)
+
     et = (seg == 4).astype(np.float32)
     tc = np.logical_or(seg == 1, seg == 4).astype(np.float32)
     wt = np.logical_or(np.logical_or(seg == 1, seg == 2), seg == 4).astype(np.float32)

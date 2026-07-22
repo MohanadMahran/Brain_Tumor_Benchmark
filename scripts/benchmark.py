@@ -1,15 +1,15 @@
-"""Entry point: Run benchmark evaluation for both models.
+"""Entry point: Run benchmark evaluation for all models.
 
-Evaluates U-Net and UNETR on held-out benchmark datasets using
+Evaluates U-Net, and UNETR on held-out benchmark datasets using
 sliding window inference with identical parameters.
 
 Usage:
-    python scripts/benchmark.py \
-        --benchmark tcga \
-        --unet_checkpoint outputs/models/unet3d/best_checkpoint.pth \
-        --unetr_checkpoint outputs/models/unetr/best_checkpoint.pth \
-        --data_dir data/raw/tcga \
-        --output_dir outputs/reports/tcga
+    python scripts/benchmark.py \\
+        --benchmark upenn_gbm \\
+        --unet_checkpoint outputs/models/unet3d/best_checkpoint.pth \\
+        --unetr_checkpoint outputs/models/unetr/best_checkpoint.pth \\
+        --data_dir data/raw/UPenn-GBM \\
+        --output_dir outputs/reports/upenn_gbm
 """
 
 import argparse
@@ -58,12 +58,12 @@ def load_model_from_checkpoint(checkpoint_path: str, model_type: str) -> tuple:
 
     Args:
         checkpoint_path: Path to .pth checkpoint file.
-        model_type: 'unet3d' or 'unetr'.
+        model_type: 'unet3d', 'unetr'.
 
     Returns:
         Loaded model in eval mode.
     """
-    checkpoint = torch.load(checkpoint_path, map_location="cpu")
+    checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     config = checkpoint.get("config", {})
 
     if model_type == "unet3d":
@@ -107,12 +107,17 @@ def load_model_from_checkpoint(checkpoint_path: str, model_type: str) -> tuple:
 
 def main():
     parser = argparse.ArgumentParser(description="Run benchmark evaluation")
-    parser.add_argument("--benchmark", type=str, required=True, choices=["tcga", "ssa"])
-    parser.add_argument("--unet_checkpoint", type=str, required=True)
-    parser.add_argument("--unetr_checkpoint", type=str, required=True)
+    parser.add_argument("--benchmark", type=str, required=True, choices=["upenn_gbm", "ssa"])
+    parser.add_argument("--unet_checkpoint", type=str, default=None)
+    parser.add_argument("--unetr_checkpoint", type=str, default=None)
     parser.add_argument("--data_dir", type=str, required=True)
     parser.add_argument("--output_dir", type=str, required=True)
     parser.add_argument("--base_config", type=str, default="configs/base.yaml")
+    parser.add_argument(
+        "--case_id", type=str, default=None,
+        help="Evaluate only a single case by its ID (e.g. UPENN-GBM-00307). "
+             "If not set, evaluates the full benchmark dataset.",
+    )
     args = parser.parse_args()
 
     # Load base config for evaluation parameters
@@ -125,24 +130,36 @@ def main():
     eval_patch_size = tuple(base_config.get("eval_patch_size", [128, 128, 128]))
     overlap = base_config.get("sliding_window_overlap", 0.25)
 
-    # Validate paths
-    if not Path(args.unet_checkpoint).exists():
-        console.print(f"[red]ERROR: U-Net checkpoint not found: {args.unet_checkpoint}[/red]")
+    # Validate paths and build list of models to evaluate
+    all_ckpts = {
+        "unet3d": ("UNet3D", args.unet_checkpoint),
+        "unetr": ("UNETR", args.unetr_checkpoint),
+    }
+    
+    model_ckpts = {}
+    for model_type, (display_name, ckpt_path) in all_ckpts.items():
+        if ckpt_path is not None:
+            if not Path(ckpt_path).exists():
+                console.print(f"[red]ERROR: {display_name} checkpoint not found: {ckpt_path}[/red]")
+                sys.exit(1)
+            model_ckpts[model_type] = (display_name, ckpt_path)
+
+    if not model_ckpts:
+        console.print("[red]ERROR: At least one model checkpoint must be provided for evaluation.[/red]")
         sys.exit(1)
-    if not Path(args.unetr_checkpoint).exists():
-        console.print(f"[red]ERROR: UNETR checkpoint not found: {args.unetr_checkpoint}[/red]")
-        sys.exit(1)
+
     if not Path(args.data_dir).exists():
         console.print(f"[red]ERROR: Benchmark data directory not found: {args.data_dir}[/red]")
         sys.exit(1)
 
     # Load models
     console.print(f"\n[bold]Loading models for {args.benchmark.upper()}...[/bold]")
-    unet_model, unet_val_dice = load_model_from_checkpoint(args.unet_checkpoint, "unet3d")
-    unetr_model, unetr_val_dice = load_model_from_checkpoint(args.unetr_checkpoint, "unetr")
-
-    # Verify parameter parity
-    verify_parameter_parity(unet_model, unetr_model, "UNet3D", "UNETR", tolerance=0.05)
+    models = {}
+    val_dices = {}
+    for model_type, (display_name, ckpt_path) in model_ckpts.items():
+        model, val_dice = load_model_from_checkpoint(ckpt_path, model_type)
+        models[model_type] = model
+        val_dices[model_type] = val_dice
 
     # Load benchmark dataset
     console.print(f"\n[bold]Loading {args.benchmark.upper()} benchmark dataset...[/bold]")
@@ -152,6 +169,21 @@ def main():
     )
     console.print(f"  Found {len(dataset)} cases")
 
+    # Filter to single case if --case_id is specified
+    if args.case_id:
+        original_count = len(dataset.cases)
+        dataset.cases = [
+            c for c in dataset.cases if c["case_id"] == args.case_id
+        ]
+        if not dataset.cases:
+            console.print(
+                f"[red]ERROR: Case '{args.case_id}' not found in dataset. "
+                f"Available cases ({original_count}): "
+                f"{', '.join(c['case_id'] for c in BenchmarkDataset(args.data_dir, args.benchmark).cases[:5])}...[/red]"
+            )
+            sys.exit(1)
+        console.print(f"  Filtered to single case: {args.case_id}")
+
     # Initialize MLflow
     mlflow_logger = MLflowLogger(
         tracking_uri=base_config.get("mlflow_tracking_uri", "outputs/mlruns"),
@@ -159,66 +191,57 @@ def main():
     )
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    benchmark_name = "UPennGBM" if args.benchmark == "upenn_gbm" else "SSA"
 
-    # Evaluate U-Net
-    console.print(f"\n[bold]Evaluating UNet3D on {args.benchmark.upper()}...[/bold]")
-    unet_evaluator = BenchmarkEvaluator(
-        model=unet_model,
-        model_name="unet3d",
-        device=device,
-        eval_patch_size=eval_patch_size,
-        overlap=overlap,
-        sw_batch_size=1,
-        use_amp=True,
-    )
+    # Evaluate each model
+    all_results = {}
+    for model_type, (display_name, _) in model_ckpts.items():
+        console.print(f"\n[bold]Evaluating {display_name} on {args.benchmark.upper()}...[/bold]")
+        evaluator = BenchmarkEvaluator(
+            model=models[model_type],
+            model_name=model_type,
+            device=device,
+            eval_patch_size=eval_patch_size,
+            overlap=overlap,
+            sw_batch_size=1,
+            use_amp=True,
+        )
+        output_dir = str(Path(args.output_dir) / "single_case") if args.case_id else args.output_dir
+        results = evaluator.evaluate_dataset(
+            dataset=dataset,
+            output_dir=output_dir,
+            mlflow_run_name=f"BrainTumor_{display_name}_Benchmark_{benchmark_name}",
+            val_dice_mean=val_dices[model_type],
+        )
+        all_results[model_type] = results
 
-    benchmark_name = "TCGA" if args.benchmark == "tcga" else "SSA"
-    unet_results = unet_evaluator.evaluate_dataset(
-        dataset=dataset,
-        output_dir=args.output_dir,
-        mlflow_run_name=f"BrainTumor_UNet3D_Benchmark_{benchmark_name}",
-        val_dice_mean=unet_val_dice,
-    )
-
-    # Free VRAM
-    del unet_model, unet_evaluator
-    torch.cuda.empty_cache()
-
-    # Evaluate UNETR
-    console.print(f"\n[bold]Evaluating UNETR on {args.benchmark.upper()}...[/bold]")
-    unetr_evaluator = BenchmarkEvaluator(
-        model=unetr_model,
-        model_name="unetr",
-        device=device,
-        eval_patch_size=eval_patch_size,
-        overlap=overlap,
-        sw_batch_size=1,
-        use_amp=True,
-    )
-
-    unetr_results = unetr_evaluator.evaluate_dataset(
-        dataset=dataset,
-        output_dir=args.output_dir,
-        mlflow_run_name=f"BrainTumor_UNETR_Benchmark_{benchmark_name}",
-        val_dice_mean=unetr_val_dice,
-    )
+        # Free VRAM between models
+        del models[model_type], evaluator
+        torch.cuda.empty_cache()
 
     # Print comparison
     console.print(f"\n[bold]{'='*60}[/bold]")
     console.print(f"[bold]{args.benchmark.upper()} Benchmark Results[/bold]")
     console.print(f"[bold]{'='*60}[/bold]")
-    console.print(f"  UNet3D Dice Mean: {unet_results.get('dice_mean', 0.0):.4f}")
-    console.print(f"  UNETR  Dice Mean: {unetr_results.get('dice_mean', 0.0):.4f}")
-    console.print(f"  UNet3D HD95 Mean: {unet_results.get('hd95_mean', 0.0):.2f}")
-    console.print(f"  UNETR  HD95 Mean: {unetr_results.get('hd95_mean', 0.0):.2f}")
+    for model_type, (display_name, _) in model_ckpts.items():
+        if model_type in all_results:
+            r = all_results[model_type]
+            console.print(
+                f"  {display_name:12s} Dice Mean: {r.get('dice_mean', 0.0):.4f}  "
+                f"HD95 Mean: {r.get('hd95_mean', 0.0):.2f}"
+            )
 
-    if args.benchmark == "tcga":
+    if args.benchmark == "upenn_gbm":
         console.print(f"\n  Per tumor type:")
-        console.print(f"    UNet3D GBM: {unet_results.get('dice_mean_GBM', 0.0):.4f}")
-        console.print(f"    UNet3D LGG: {unet_results.get('dice_mean_LGG', 0.0):.4f}")
-        console.print(f"    UNETR  GBM: {unetr_results.get('dice_mean_GBM', 0.0):.4f}")
-        console.print(f"    UNETR  LGG: {unetr_results.get('dice_mean_LGG', 0.0):.4f}")
+        for model_type, (display_name, _) in model_ckpts.items():
+            if model_type in all_results:
+                r = all_results[model_type]
+                console.print(
+                    f"    {display_name:12s} GBM: {r.get('dice_mean_GBM', 0.0):.4f}  "
+                    f"LGG: {r.get('dice_mean_LGG', 0.0):.4f}"
+                )
 
 
 if __name__ == "__main__":
     main()
+

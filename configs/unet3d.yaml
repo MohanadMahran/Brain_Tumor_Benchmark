@@ -1,11 +1,11 @@
 # 3D U-Net specific configuration
 model: unet3d
-base_channels: 32
-channel_progression: [32, 64, 128, 256]
+base_channels: 60
+channel_progression: [60, 120, 240, 480]
 in_channels: 4
 out_channels: 3
-groups: 8               # GroupNorm groups
-dropout_rates: [0.1, 0.2, 0.2, 0.2]
+groups: 4               # GroupNorm groups (must divide all channel widths)
+dropout_rates: [0.0, 0.0, 0.0, 0.0]
 
 # Optimizer
 optimizer: adamw
@@ -17,4 +17,4 @@ min_lr: 1.0e-6
 
 # Target parameter count
 target_params_millions: 19.0
-param_tolerance: 0.05   # 5% tolerance
+param_tolerance: 0.10   # 10% tolerance

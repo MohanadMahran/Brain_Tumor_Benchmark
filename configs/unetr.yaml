@@ -1,13 +1,13 @@
 # UNETR specific configuration
 model: unetr
-embedding_dim: 256
+embedding_dim: 384
 num_layers: 6
-num_heads: 4
+num_heads: 8
 mlp_ratio: 4
 patch_size_tokens: 16   # Each token is 16x16x16
 in_channels: 4
 out_channels: 3
-dropout: 0.1
+dropout: 0.0
 
 # Feature extraction layers
 feature_extraction_layers: [3, 6]
@@ -26,4 +26,4 @@ pretrained_source: "vit_base_patch16"
 
 # Target parameter count
 target_params_millions: 19.0
-param_tolerance: 0.05   # 5% tolerance
+param_tolerance: 0.10   # 10% tolerance

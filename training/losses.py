@@ -54,6 +54,10 @@ class DiceCELoss(nn.Module):
             f"Shape mismatch: logits {logits.shape} vs targets {targets.shape}"
         )
 
+        # Cast to float32 to prevent any FP16 overflows in loss computations
+        logits = logits.float()
+        targets = targets.float()
+
         # Apply label smoothing to targets for CE component
         if self.label_smoothing > 0:
             smoothed_targets = targets * (1.0 - self.label_smoothing) + 0.5 * self.label_smoothing
@@ -94,9 +98,9 @@ class DiceCELoss(nn.Module):
         Returns:
             Dice loss (1 - Dice coefficient).
         """
-        # Flatten spatial dimensions
-        pred_flat = pred.contiguous().view(-1)
-        target_flat = target.contiguous().view(-1)
+        # Flatten spatial dimensions and cast to float32 to prevent FP16 overflow
+        pred_flat = pred.float().contiguous().view(-1)
+        target_flat = target.float().contiguous().view(-1)
 
         intersection = (pred_flat * target_flat).sum()
         dice = (2.0 * intersection + self.smooth) / (

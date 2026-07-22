@@ -19,7 +19,6 @@ from monai.transforms import (
     SpatialPadd,
     CenterSpatialCropd,
     EnsureTyped,
-    ToTensord,
 )
 
 
@@ -114,3 +113,36 @@ def get_val_transforms(
     ]
 
     return Compose(transforms)
+
+
+def get_overfit_transforms(
+    patch_size: Tuple[int, int, int] = (128, 128, 128),
+    keys: List[str] = None,
+) -> Compose:
+    """Build deterministic transform pipeline for overfit sanity check.
+
+    Identical to validation transforms: pad + center crop only.
+    No random augmentation of any kind, ensuring the model sees
+    exactly the same data every epoch.
+
+    Args:
+        patch_size: Training patch dimensions (center crop size).
+        keys: Dictionary keys for image and label. Defaults to ["image", "label"].
+
+    Returns:
+        MONAI Compose transform pipeline.
+    """
+    if keys is None:
+        keys = ["image", "label"]
+
+    transforms = [
+        # Pad to ensure minimum size
+        SpatialPadd(keys=keys, spatial_size=patch_size, mode="constant"),
+        # Center crop only — deterministic, same every epoch
+        CenterSpatialCropd(keys=keys, roi_size=patch_size),
+        # Ensure tensor type
+        EnsureTyped(keys=keys, dtype="float32"),
+    ]
+
+    return Compose(transforms)
+

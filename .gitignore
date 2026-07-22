@@ -2,10 +2,13 @@
 data/raw/
 
 # Outputs — models, logs, reports are generated not tracked
-outputs/models/
-outputs/logs/
-outputs/mlruns/
-outputs/reports/
+outputs/models/*
+outputs/logs/*
+outputs/mlruns/*
+outputs/reports/*
+outputs/slurm_logs/*
+outputs/results/*
+
 
 # Keep the outputs directory structure but not its contents
 !outputs/.gitkeep

@@ -1,6 +1,6 @@
 """Benchmark evaluator using sliding window inference.
 
-Evaluates trained models on held-out benchmark datasets (TCGA, BraTS-SSA)
+Evaluates trained models on held-out benchmark datasets (UPenn-GBM, BraTS-SSA)
 using MONAI's sliding_window_inference with Gaussian blending.
 """
 
@@ -17,7 +17,6 @@ import torch.nn as nn
 from monai.inferers import sliding_window_inference
 from rich.console import Console
 from rich.progress import Progress
-from torch.cuda.amp import autocast
 
 from data.dataset import BenchmarkDataset
 from training.metrics import compute_all_metrics
@@ -161,7 +160,7 @@ class BenchmarkEvaluator:
         # Sliding window inference
         with torch.no_grad():
             if self.use_amp:
-                with autocast():
+                with torch.amp.autocast("cuda"):
                     predictor = lambda x: torch.sigmoid(self.model(x))
                     outputs = sliding_window_inference(
                         inputs=image,
@@ -238,7 +237,7 @@ class BenchmarkEvaluator:
         benchmark_dice_mean = aggregate.get("dice_mean", 0.0)
         aggregate["dice_drop_vs_val"] = val_dice_mean - benchmark_dice_mean
 
-        # Per-tumor-type breakdown (for TCGA)
+        # Per-tumor-type breakdown (for UPenn-GBM)
         tumor_types = set(r.get("tumor_type", "unknown") for r in with_metrics)
         for tt in tumor_types:
             if tt in ("GBM", "LGG"):

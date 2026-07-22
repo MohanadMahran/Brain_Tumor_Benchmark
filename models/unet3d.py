@@ -137,7 +137,7 @@ class Encoder(nn.Module):
 
         # Levels 1-3
         for i in range(1, 4):
-            self.pools.append(nn.MaxPool3d(2, 2, 2))
+            self.pools.append(nn.MaxPool3d(kernel_size=2, stride=2))
             self.blocks.append(
                 ConvBlock(channels[i - 1], channels[i], groups, dropout_rates[i], dpr[i])
             )

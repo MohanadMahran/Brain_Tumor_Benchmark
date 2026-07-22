@@ -27,11 +27,11 @@ MODALITY_PATTERNS = {
         "seg": "_seg.nii.gz",
     },
     "brats2024": {
-        "t1": "-t1n.nii.gz",
-        "t1ce": "-t1c.nii.gz",
-        "t2": "-t2w.nii.gz",
-        "flair": "-t2f.nii.gz",
-        "seg": "-seg.nii.gz",
+        "t1": "-t1n.nii",
+        "t1ce": "-t1c.nii",
+        "t2": "-t2w.nii",
+        "flair": "-t2f.nii",
+        "seg": "-seg.nii",
     },
 }
 

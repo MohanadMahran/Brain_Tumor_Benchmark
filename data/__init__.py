@@ -10,7 +10,7 @@ Modules:
 
 from data.dataset import BraTSDataset
 from data.preprocessing import preprocess_volume
-from data.augmentation import get_train_transforms, get_val_transforms
+from data.augmentation import get_train_transforms, get_val_transforms, get_overfit_transforms
 from data.splits import generate_splits
 from data.deduplication import deduplicate_datasets
 
@@ -19,6 +19,8 @@ __all__ = [
     "preprocess_volume",
     "get_train_transforms",
     "get_val_transforms",
+    "get_overfit_transforms",
     "generate_splits",
     "deduplicate_datasets",
 ]
+

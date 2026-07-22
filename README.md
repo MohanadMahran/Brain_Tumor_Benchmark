@@ -7,7 +7,7 @@
 
 A comprehensive, highly-optimized, and fair benchmarking framework for comparing 3D Convolutional Neural Networks (3D U-Net) and Vision Transformers (UNETR) on the complex task of brain tumor segmentation using multi-modal MRI scans. 
 
-This project trains models on a deduplicated composite dataset derived from **BraTS 2021** and **BraTS 2024 Adult Glioma**, and evaluates them rigorously on independent, held-out benchmark datasets: **TCGA-GBM/LGG** and **BraTS-SSA**.
+This project trains models on a deduplicated composite dataset derived from **BraTS 2021** and **BraTS 2024 Adult Glioma**, and evaluates them rigorously on independent, held-out benchmark datasets: **UPenn-GBM** and **BraTS-SSA**.
 
 ---
 
@@ -92,6 +92,18 @@ This project utilizes [Astral UV](https://github.com/astral-sh/uv) for blazing-f
 
 The pipeline expects datasets to be downloaded and extracted into the `data/raw/` directory following a specific structure.
 
+### Training Data (BraTS 2021 + BraTS 2024)
+
+Downloaded from Kaggle. These two datasets are deduplicated using MD5 hashing before training.
+
+### Benchmark Data
+
+- **UPenn-GBM**: The University of Pennsylvania GBM dataset (30 cases with expert segmentation labels). Obtained from the UPenn-GBM TCIA collection. The data ships with modalities in flat subdirectories; run `scripts/reorganize_upenn_gbm.py` to create per-case directories with symlinks.
+  
+  > **Note:** UPenn-GBM uses label **3** for enhancing tumor (ET), whereas BraTS uses label **4**. The pipeline automatically remaps `3 → 4` during label loading (see `data/preprocessing.py`).
+
+- **BraTS-SSA**: BraTS Sub-Saharan Africa challenge dataset (from Kaggle/Synapse).
+
 ```text
 data/raw/
 ├── brats2021/          # BraTS 2021 (from Kaggle)
@@ -104,7 +116,13 @@ data/raw/
 │   └── ...
 ├── brats2024/          # BraTS 2024 Adult Glioma (from Kaggle)
 │   └── ...
-├── tcga/               # TCGA-GBM + TCGA-LGG (from TCIA)
+├── UPenn-GBM/          # UPenn-GBM benchmark (30 cases, reorganized per-case)
+│   ├── UPENN-GBM-00307/
+│   │   ├── UPENN-GBM-00307_11_T1.nii.gz
+│   │   ├── UPENN-GBM-00307_11_T1GD.nii.gz
+│   │   ├── UPENN-GBM-00307_11_T2.nii.gz
+│   │   ├── UPENN-GBM-00307_11_FLAIR.nii.gz
+│   │   └── UPENN-GBM-00307_11_segm.nii.gz
 │   └── ...
 └── brats_ssa/          # BraTS-SSA Sub-Saharan Africa (from Kaggle/Synapse)
     └── ...
@@ -124,7 +142,7 @@ bash run_all.sh
 1. **Deduplication (`verify_deduplicate.py`)**: Checks for overlapping patients and generates safe train/val splits.
 2. **Train 3D U-Net (`train_unet3d.py`)**: Trains the U-Net model.
 3. **Train UNETR (`train_unetr.py`)**: Trains the UNETR model.
-4. **Benchmark TCGA (`benchmark.py`)**: Evaluates both models on the TCGA dataset.
+4. **Benchmark UPenn-GBM (`benchmark.py`)**: Evaluates both models on the UPenn-GBM dataset.
 5. **Benchmark BraTS-SSA (`benchmark.py`)**: Evaluates both models on the BraTS-SSA dataset.
 6. **Generate Reports**: Outputs comparison metrics to CSV files.
 
@@ -156,15 +174,21 @@ uv run python scripts/train_unetr.py \
 ### 2. Running Individual Benchmarks
 After training, evaluate the models on specific datasets:
 
-**TCGA Benchmark:**
+**UPenn-GBM Benchmark:**
 ```bash
 uv run python scripts/benchmark.py \
-    --benchmark tcga \
-    --data_dir data/raw/tcga \
+    --benchmark upenn_gbm \
+    --data_dir data/raw/UPenn-GBM \
     --unet_checkpoint outputs/models/unet3d/best_checkpoint.pth \
     --unetr_checkpoint outputs/models/unetr/best_checkpoint.pth \
-    --output_dir outputs/reports/tcga \
+    --output_dir outputs/reports/upenn_gbm \
     --base_config configs/base.yaml
+```
+
+### 3. Evaluation-Only Mode
+Run benchmark evaluation using existing checkpoints without training:
+```bash
+uv run python main.py --mode test
 ```
 
 ---
@@ -210,6 +234,7 @@ Open your browser to `http://127.0.0.1:5000`.
 | **Mixed Precision (FP16)** | Reduces VRAM footprint by ~50% and speeds up compute via Tensor Cores. |
 | **Cosine Annealing** | A robust learning rate scheduler that works excellently for both CNN and Transformer-based models. |
 | **Custom 4-Channel Adapter** | Standard Vision Transformers expect 3-channel RGB. An adapter layer handles the 4-channel MRI inputs (T1, T1Gd, T2, FLAIR). |
+| **Label 3→4 Remap** | UPenn-GBM uses label 3 for enhancing tumor where BraTS uses label 4. The remap is a safe no-op for BraTS data (label 3 never appears). |
 
 ---
 

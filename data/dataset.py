@@ -126,21 +126,21 @@ class BraTSDataset(Dataset):
 
 
 class BenchmarkDataset(Dataset):
-    """Dataset class for benchmark evaluation (TCGA, BraTS-SSA).
+    """Dataset class for benchmark evaluation (UPenn-GBM, BraTS-SSA).
 
     Similar to BraTSDataset but handles different directory structures
-    and includes metadata about tumor type for TCGA.
+    and includes metadata about tumor type for UPenn-GBM.
 
     Args:
         data_dir: Root directory of benchmark dataset.
-        benchmark_type: 'tcga' or 'ssa'.
+        benchmark_type: 'upenn_gbm' or 'ssa'.
         transform: Optional transform pipeline.
     """
 
     def __init__(
         self,
         data_dir: str,
-        benchmark_type: str = "tcga",
+        benchmark_type: str = "upenn_gbm",
         transform: Optional[Callable] = None,
     ):
         self.data_dir = Path(data_dir)
@@ -161,9 +161,9 @@ class BenchmarkDataset(Dataset):
                 continue
             nifti_files = list(entry.glob("*.nii.gz")) + list(entry.glob("*.nii"))
             if len(nifti_files) >= 4:
-                # Determine tumor type for TCGA
+                # Determine tumor type for UPenn-GBM
                 tumor_type = "unknown"
-                if self.benchmark_type == "tcga":
+                if self.benchmark_type == "upenn_gbm":
                     name_lower = entry.name.lower()
                     if "gbm" in name_lower:
                         tumor_type = "GBM"
@@ -200,19 +200,41 @@ class BenchmarkDataset(Dataset):
         return data
 
     def _find_modalities(self, case_dir: Path) -> Dict[str, str]:
-        """Find modality files using flexible pattern matching."""
+        """Find modality files using flexible pattern matching.
+
+        Supports naming conventions from:
+        - BraTS 2021: *_t1.nii.gz, *_t1ce.nii.gz, *_t2.nii.gz, *_flair.nii.gz
+        - BraTS 2024: *-t1n.nii, *-t1c.nii, *-t2w.nii, *-t2f.nii
+        - UPenn-GBM: *_T1.nii.gz, *_T1GD.nii.gz, *_T2.nii.gz, *_FLAIR.nii.gz
+        """
         modalities = {}
+        # Patterns per modality, tried in order. First match wins.
         patterns = {
-            "t1": ["*t1.nii*", "*_t1_*", "*-t1n*", "*t1.nii.gz"],
-            "t1ce": ["*t1ce*", "*t1Gd*", "*t1c*", "*-t1c.*"],
-            "t2": ["*t2.nii*", "*_t2_*", "*-t2w*", "*t2.nii.gz"],
-            "flair": ["*flair*", "*-t2f*", "*FLAIR*"],
+            "t1": ["*_T1.nii*", "*t1.nii*", "*_t1_*", "*-t1n*", "*t1.nii.gz"],
+            "t1ce": ["*_T1GD*", "*t1ce*", "*t1Gd*", "*t1c*", "*-t1c.*"],
+            "t2": ["*_T2.nii*", "*t2.nii*", "*_t2_*", "*-t2w*", "*t2.nii.gz"],
+            "flair": ["*_FLAIR*", "*flair*", "*-t2f*", "*FLAIR*"],
+        }
+        # Keywords to exclude per modality to prevent cross-matching
+        # (e.g., T1 pattern must not match T1GD/T1CE files)
+        exclude_keywords = {
+            "t1": ["t1ce", "t1gd", "t1c.", "t1Gd", "T1GD", "T1CE", "T1C."],
+            "t1ce": [],
+            "t2": [],
+            "flair": [],
         }
         for mod, pats in patterns.items():
+            excludes = exclude_keywords.get(mod, [])
             for pat in pats:
                 found = list(case_dir.glob(pat))
                 # Exclude segmentation files
                 found = [f for f in found if "seg" not in f.name.lower()]
+                # Exclude cross-modality matches
+                if excludes:
+                    found = [
+                        f for f in found
+                        if not any(kw in f.name for kw in excludes)
+                    ]
                 if found:
                     modalities[mod] = str(sorted(found)[0])
                     break

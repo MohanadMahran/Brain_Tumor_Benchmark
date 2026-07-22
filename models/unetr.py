@@ -1,13 +1,14 @@
-"""Reduced UNETR implementation for brain tumor segmentation.
+"""UNETR implementation for brain tumor segmentation.
 
 Architecture:
-    - Patch embedding: 16³ non-overlapping patches -> 216 tokens
-    - Transformer: 6 layers, 4 heads, embedding_dim=256
+    - Patch embedding: 16³ non-overlapping patches (dynamic token count)
+    - Transformer: 6 layers, 8 heads, embedding_dim=384
     - Pre-norm with LayerNorm
     - Gradient checkpointing on all transformer layers
     - CNN decoder with skip connections from layers 3 and 6
     - Stochastic depth (drop path) regularization
     - NO BatchNorm — LayerNorm exclusively
+    - Dynamic positional embedding interpolation for variable input sizes
 
 Target: ~19M parameters.
 """
@@ -47,11 +48,16 @@ class PatchEmbedding3D(nn.Module):
     Divides input volume into non-overlapping patches and projects
     each flattened patch to the embedding dimension.
 
+    Positional embeddings are allocated at init for the given input_size,
+    but dynamically interpolated in forward() if the actual input produces
+    a different number of tokens (e.g., input_size=128 with patch_size=16
+    produces 8^3=512 tokens).
+
     Args:
         in_channels: Input channels (4 for BraTS).
         patch_size: Patch dimensions (e.g., 16).
         embedding_dim: Token embedding dimension.
-        input_size: Input spatial dimensions (e.g., 96).
+        input_size: Input spatial dimensions used to initialize pos_embed.
     """
 
     def __init__(
@@ -64,8 +70,8 @@ class PatchEmbedding3D(nn.Module):
         super().__init__()
         self.patch_size = patch_size
         self.embedding_dim = embedding_dim
-        self.num_patches = (input_size // patch_size) ** 3  # (96/16)^3 = 216
-        self.grid_size = input_size // patch_size  # 6
+        self.init_grid_size = input_size // patch_size
+        self.init_num_patches = self.init_grid_size ** 3
 
         # Linear projection via Conv3d with kernel_size = stride = patch_size
         self.proj = nn.Conv3d(
@@ -77,9 +83,40 @@ class PatchEmbedding3D(nn.Module):
 
         # Learnable absolute positional embeddings
         self.pos_embed = nn.Parameter(
-            torch.zeros(1, self.num_patches, embedding_dim)
+            torch.zeros(1, self.init_num_patches, embedding_dim)
         )
         nn.init.trunc_normal_(self.pos_embed, std=0.02)
+
+    def _interpolate_pos_embed(
+        self, pos_embed: torch.Tensor, grid_size: int
+    ) -> torch.Tensor:
+        """Interpolate positional embeddings to match actual grid size.
+
+        Reshapes the 1D token sequence to a 3D grid, applies trilinear
+        interpolation, then flattens back.
+
+        Args:
+            pos_embed: Shape (1, init_num_patches, embedding_dim).
+            grid_size: Actual grid size (tokens per spatial dimension).
+
+        Returns:
+            Interpolated pos_embed of shape (1, grid_size^3, embedding_dim).
+        """
+        g0 = self.init_grid_size
+        # (1, g0^3, D) -> (1, D, g0, g0, g0)
+        pos_embed = pos_embed.transpose(1, 2).reshape(
+            1, self.embedding_dim, g0, g0, g0
+        )
+        # Interpolate to new grid size
+        pos_embed = F.interpolate(
+            pos_embed,
+            size=(grid_size, grid_size, grid_size),
+            mode="trilinear",
+            align_corners=False,
+        )
+        # (1, D, g, g, g) -> (1, g^3, D)
+        pos_embed = pos_embed.flatten(2).transpose(1, 2)
+        return pos_embed
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Convert volume to sequence of patch embeddings.
@@ -92,12 +129,21 @@ class PatchEmbedding3D(nn.Module):
         """
         # (B, C, D, H, W) -> (B, embed_dim, D', H', W')
         x = self.proj(x)
+        B, D_emb, gD, gH, gW = x.shape
+        actual_grid_size = gD  # assumes cubic input: gD == gH == gW
+
         # (B, embed_dim, D', H', W') -> (B, embed_dim, num_patches)
         x = x.flatten(2)
         # (B, embed_dim, num_patches) -> (B, num_patches, embed_dim)
         x = x.transpose(1, 2)
-        # Add positional embeddings
-        x = x + self.pos_embed
+
+        # Interpolate positional embeddings if token count changed
+        if actual_grid_size != self.init_grid_size:
+            pos_embed = self._interpolate_pos_embed(self.pos_embed, actual_grid_size)
+        else:
+            pos_embed = self.pos_embed
+
+        x = x + pos_embed
         return x
 
 
@@ -448,39 +494,39 @@ class CNNDecoder(nn.Module):
 
 
 class UNETR(nn.Module):
-    """Reduced UNETR for 3D brain tumor segmentation.
+    """UNETR for 3D brain tumor segmentation.
 
     Combines a Vision Transformer encoder with a CNN decoder.
-    Uses gradient checkpointing to fit within 8GB VRAM.
+    Uses gradient checkpointing to reduce VRAM usage.
     NO BatchNorm — LayerNorm exclusively.
 
     Args:
         in_channels: Input channels (4).
         out_channels: Output channels (3).
-        input_size: Spatial dimension of input (96).
+        input_size: Spatial dimension of input (128).
         patch_size: Token patch size (16).
-        embedding_dim: Transformer embedding dimension (256).
+        embedding_dim: Transformer embedding dimension (384).
         num_layers: Number of transformer blocks (6).
-        num_heads: Number of attention heads (4).
+        num_heads: Number of attention heads (8).
         mlp_ratio: MLP expansion ratio (4).
-        dropout: Dropout rate (0.1).
-        drop_path_rate: Stochastic depth rate (0.1).
-        use_checkpoint: Use gradient checkpointing (True).
+        dropout: Dropout rate (0.0).
+        drop_path_rate: Stochastic depth rate (0.0).
+        use_checkpoint: Use gradient checkpointing (False).
     """
 
     def __init__(
         self,
         in_channels: int = 4,
         out_channels: int = 3,
-        input_size: int = 96,
+        input_size: int = 128,
         patch_size: int = 16,
-        embedding_dim: int = 256,
+        embedding_dim: int = 384,
         num_layers: int = 6,
-        num_heads: int = 4,
+        num_heads: int = 8,
         mlp_ratio: int = 4,
-        dropout: float = 0.1,
-        drop_path_rate: float = 0.1,
-        use_checkpoint: bool = True,
+        dropout: float = 0.0,
+        drop_path_rate: float = 0.0,
+        use_checkpoint: bool = False,
     ):
         super().__init__()
         self.input_size = input_size
@@ -512,15 +558,16 @@ class UNETR(nn.Module):
             base_decoder_channels=32,
         )
 
-        # Feature extraction layers (1-indexed)
-        self.extraction_layers = [3, 6]
+        # Feature extraction layers (1-indexed): mid-layer and final layer
+        self.extraction_layers = [num_layers // 2, num_layers]
 
         # Initialize weights
         self._init_weights()
 
         logger.info(
             f"UNETR initialized: embed_dim={embedding_dim}, layers={num_layers}, "
-            f"heads={num_heads}, patches={grid_size}^3={grid_size**3}"
+            f"heads={num_heads}, patches={grid_size}^3={grid_size**3}, "
+            f"extraction_layers={self.extraction_layers}"
         )
 
     def _init_weights(self):

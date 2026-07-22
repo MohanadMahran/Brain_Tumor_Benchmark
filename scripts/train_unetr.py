@@ -43,7 +43,7 @@ from models.unetr import UNETR
 from models.param_counter import count_parameters, print_model_summary
 from models.adapters import load_pretrained_vit_for_unetr
 from data.dataset import BraTSDataset
-from data.augmentation import get_train_transforms, get_val_transforms
+from data.augmentation import get_train_transforms, get_val_transforms, get_overfit_transforms
 from training.trainer import Trainer
 from training.vram_profiler import VRAMProfiler
 from tracking.mlflow_logger import MLflowLogger
@@ -73,6 +73,7 @@ def main():
     args = parser.parse_args()
 
     config = load_config(args.config, args.base_config)
+    overfit_mode = config.get("overfit_mode", False)
 
     # Allow TF32
     if config.get("allow_tf32", True):
@@ -81,18 +82,22 @@ def main():
 
     # Build model
     console.print("\n[bold]Building UNETR...[/bold]")
+
+    patch_size = tuple(config.get("patch_size", [128, 128, 128]))
+    input_size = patch_size[0]  # Use training patch size as input size
+
     model = UNETR(
         in_channels=config.get("in_channels", 4),
         out_channels=config.get("out_channels", 3),
-        input_size=config.get("patch_size", [96, 96, 96])[0],
+        input_size=input_size,
         patch_size=config.get("patch_size_tokens", 16),
-        embedding_dim=config.get("embedding_dim", 256),
+        embedding_dim=config.get("embedding_dim", 384),
         num_layers=config.get("num_layers", 6),
-        num_heads=config.get("num_heads", 4),
+        num_heads=config.get("num_heads", 8),
         mlp_ratio=config.get("mlp_ratio", 4),
-        dropout=config.get("dropout", 0.1),
-        drop_path_rate=config.get("drop_path_rate", 0.1),
-        use_checkpoint=config.get("gradient_checkpointing", True),
+        dropout=config.get("dropout", 0.0),
+        drop_path_rate=config.get("drop_path_rate", 0.0),
+        use_checkpoint=config.get("gradient_checkpointing", False),
     )
 
     # Optional pre-trained weight loading
@@ -123,12 +128,18 @@ def main():
         console.print("[yellow]Run deduplication first: python scripts/verify_deduplicate.py[/yellow]")
         sys.exit(1)
 
-    train_transforms = get_train_transforms(
-        patch_size=tuple(config.get("patch_size", [96, 96, 96]))
-    )
-    val_transforms = get_val_transforms(
-        patch_size=tuple(config.get("eval_patch_size", [128, 128, 128]))
-    )
+    if overfit_mode:
+        # Overfit mode: deterministic transforms, same manifest for train and val
+        console.print("[yellow]OVERFIT MODE: Using deterministic transforms, same data for train/val[/yellow]")
+        train_transforms = get_overfit_transforms(patch_size=patch_size)
+        val_transforms = get_overfit_transforms(patch_size=patch_size)
+        # Use train manifest for BOTH train and val
+        val_manifest = train_manifest
+    else:
+        train_transforms = get_train_transforms(patch_size=patch_size)
+        val_transforms = get_val_transforms(
+            patch_size=tuple(config.get("eval_patch_size", [128, 128, 128]))
+        )
 
     train_dataset = BraTSDataset(
         manifest_path=str(train_manifest),
@@ -139,24 +150,31 @@ def main():
         transform=val_transforms,
     )
 
+    num_workers = config.get("num_workers", 8)
+    use_persistent = config.get("persistent_workers", True) and num_workers > 0
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=config.get("physical_batch_size", 1),
-        shuffle=True,
-        num_workers=config.get("num_workers", 4),
+        shuffle=not overfit_mode,
+        num_workers=num_workers,
         pin_memory=config.get("pin_memory", True),
-        drop_last=True,
+        drop_last=not overfit_mode,
+        persistent_workers=use_persistent,
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size=config.get("val_batch_size", 1),
         shuffle=False,
-        num_workers=config.get("num_workers", 4),
+        num_workers=num_workers,
         pin_memory=config.get("pin_memory", True),
+        persistent_workers=use_persistent,
     )
 
     console.print(f"  Train: {len(train_dataset)} cases")
     console.print(f"  Val: {len(val_dataset)} cases")
+    if overfit_mode:
+        console.print("  [yellow]Train and val use the SAME cases (overfit mode)[/yellow]")
 
     # Initialize MLflow
     mlflow_logger = MLflowLogger(
@@ -168,29 +186,30 @@ def main():
         # Log parameters
         mlflow.log_param("model_name", "unetr")
         mlflow.log_param("total_parameters", total_params)
-        mlflow.log_param("effective_batch_size", config.get("effective_batch_size", 2))
+        mlflow.log_param("effective_batch_size", config.get("effective_batch_size", 1))
         mlflow.log_param("physical_batch_size", config.get("physical_batch_size", 1))
-        mlflow.log_param("gradient_accumulation_steps", config.get("gradient_accumulation_steps", 2))
-        mlflow.log_param("patch_size_train", str(config.get("patch_size", [96, 96, 96])))
+        mlflow.log_param("gradient_accumulation_steps", config.get("gradient_accumulation_steps", 1))
+        mlflow.log_param("patch_size_train", str(patch_size))
         mlflow.log_param("patch_size_eval", str(config.get("eval_patch_size", [128, 128, 128])))
         mlflow.log_param("sliding_window_overlap", config.get("sliding_window_overlap", 0.25))
         mlflow.log_param("optimizer", config.get("optimizer", "adamw"))
-        mlflow.log_param("learning_rate", config.get("learning_rate", 1e-4))
-        mlflow.log_param("weight_decay", config.get("weight_decay", 1e-5))
-        mlflow.log_param("warmup_epochs", config.get("warmup_epochs", 15))
+        mlflow.log_param("learning_rate", config.get("learning_rate", 1e-3))
+        mlflow.log_param("weight_decay", config.get("weight_decay", 0))
+        mlflow.log_param("warmup_epochs", config.get("warmup_epochs", 0))
         mlflow.log_param("loss_function", "DiceCE")
         mlflow.log_param("normalization", "LayerNorm")
         mlflow.log_param("mixed_precision", config.get("mixed_precision", True))
-        mlflow.log_param("gradient_checkpointing", config.get("gradient_checkpointing", True))
+        mlflow.log_param("gradient_checkpointing", config.get("gradient_checkpointing", False))
         mlflow.log_param("training_cases", len(train_dataset))
         mlflow.log_param("validation_cases", len(val_dataset))
+        mlflow.log_param("overfit_mode", overfit_mode)
         mlflow.log_param("seed", config.get("seed", 42))
         mlflow.log_param("gpu", torch.cuda.get_device_name(0) if torch.cuda.is_available() else "N/A")
         mlflow.log_param("cuda_version", torch.version.cuda or "N/A")
         mlflow.log_param("use_pretrained", config.get("use_pretrained", False))
-        mlflow.log_param("embedding_dim", config.get("embedding_dim", 256))
+        mlflow.log_param("embedding_dim", config.get("embedding_dim", 384))
         mlflow.log_param("num_transformer_layers", config.get("num_layers", 6))
-        mlflow.log_param("num_attention_heads", config.get("num_heads", 4))
+        mlflow.log_param("num_attention_heads", config.get("num_heads", 8))
 
         # VRAM check
         vram_profiler = VRAMProfiler()
@@ -200,8 +219,8 @@ def main():
         model = model.to(model_device)
 
         try:
-            test_input = torch.randn(1, 4, 96, 96, 96, device=model_device)
-            with torch.cuda.amp.autocast(enabled=config.get("mixed_precision", True)):
+            test_input = torch.randn(1, 4, *patch_size, device=model_device)
+            with torch.amp.autocast("cuda", enabled=config.get("mixed_precision", True)):
                 test_output = model(test_input)
             console.print(f"  Input shape: {test_input.shape}")
             console.print(f"  Output shape: {test_output.shape}")

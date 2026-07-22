@@ -8,7 +8,6 @@ volume data and removes the older (2021) version when matches are found.
 import hashlib
 import json
 import logging
-import os
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -31,23 +30,28 @@ def compute_case_md5(case_dir: Path, modalities: List[str]) -> str:
     Returns:
         Hex digest of MD5 hash of concatenated volume data.
     """
+    modality_aliases = {
+        "t1":    ["t1", "t1n"],
+        "t1ce":  ["t1ce", "t1c"],
+        "t2":    ["t2", "t2w"],
+        "flair": ["flair", "t2f"],
+    }
+
     hasher = hashlib.md5()
-
-    for mod in sorted(modalities):  # Sort for deterministic ordering
-        # Find the modality file (handle different naming conventions)
-        nifti_files = list(case_dir.glob(f"*{mod}*.nii.gz")) + \
-                      list(case_dir.glob(f"*{mod}*.nii"))
-
+    for mod in sorted(modalities):
+        aliases = modality_aliases.get(mod, [mod])
+        nifti_files = []
+        for alias in aliases:
+            nifti_files += list(case_dir.glob(f"*{alias}*.nii.gz"))
+            nifti_files += list(case_dir.glob(f"*{alias}*.nii"))
         if not nifti_files:
             raise FileNotFoundError(
-                f"No NIfTI file found for modality '{mod}' in {case_dir}"
+                f"No NIfTI file found for modality '{mod}' (tried aliases {aliases}) in {case_dir}"
             )
-
-        nifti_path = sorted(nifti_files)[0]  # Take first match deterministically
+        nifti_path = sorted(nifti_files)[0]
         img = nib.load(str(nifti_path))
         data = img.get_fdata(dtype=np.float32)
         hasher.update(data.tobytes())
-
     return hasher.hexdigest()
 
 
